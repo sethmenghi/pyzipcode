@@ -4,11 +4,8 @@ import logging
 
 import pandas as pd
 import us
-try:
-    from sqlalchemy import create_engine
-    import sqlalchemy.exc as exceptions
-except ImportError:
-    import psycopg2
+from sqlalchemy import create_engine
+import sqlalchemy.exc as exceptions
 
 from . import settings
 
@@ -53,7 +50,7 @@ class ConnectionManager(object):
 
 class ZipCode(object):
     def __init__(self, row):
-        self.zip = row['zip_code']
+        self.zip = row['zipcode']
         self.county = row['county']
         self.county_fips = row['countyfips']
         self.city = row['city']
@@ -82,12 +79,12 @@ class ZipCodeDatabase(object):
     def format_result(self, query):
         zips = pd.read_sql(sql=query, con=self.engine)
         if len(zips) > 0:
-            return [ZipCode(_zip) for _zip in zips.iterrows()]
+            return [ZipCode(_zip) for index, _zip in zips.iterrows()]
         else:
             return None
 
     def get(self, _zip):
-        zip_query = """SELECT * FROM {table} WHERE zip='{zipcode}'
+        zip_query = """SELECT * FROM {table} WHERE zipcode='{zipcode}'
                     """.format(table=self.table, zipcode=_zip)
         return self.format_result(zip_query)
 
