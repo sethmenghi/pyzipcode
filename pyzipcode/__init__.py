@@ -1,114 +1,146 @@
-from settings import db_location
-try:
-    import sqlite3
-except ImportError:
-    from pysqlite2 import dbapi2 as sqlite3
-import math
+from __future__ import absolute_import
 import time
+import logging
+
+import pandas as pd
+import us
+try:
+    from sqlalchemy import create_engine
+    import sqlalchemy.exc as exceptions
+except ImportError:
+    import psycopg2
+
+from . import settings
+
+
+logger = logging.getLogger(__name__)
+
 
 class ConnectionManager(object):
     """
     Assumes a database that will work with cursor objects
     """
-    
+
     def __init__(self):
         # test out the connection...
-        conn = sqlite3.connect(db_location)
-        conn.close()
-            
-    def query(self, sql, args):
+        self.engine = create_engine(settings.url)
+        with self.engine.connect() as conn:
+            pass
+
+    def query(self, sql):
         conn = None
         retry_count = 0
         while not conn and retry_count <= 10:
-        # If there is trouble reading the file, retry for 10 attempts
-        # then just give up...
+            # If there is trouble reading the file, retry for 10 attempts
+            # then just give up...
             try:
-                conn = sqlite3.connect(db_location)
-            except sqlite3.OperationalError, x:
+                engine = create_engine(settings.url)
+                with engine.connect() as conn:
+                    break
+            except exceptions.OperationalError:
                 retry_count += 1
                 time.sleep(0.001)
-        
-        if not conn and retry_count > 10:
-            raise sqlite3.OperationalError("Can't connect to sqlite database.")
-                
-        cursor = conn.cursor()
-        cursor.execute(sql, args)
-        res = cursor.fetchall()
-        conn.close()
-        return res
 
-ZIP_QUERY = "SELECT * FROM ZipCodes WHERE zip=?"
-ZIP_RANGE_QUERY = "SELECT * FROM ZipCodes WHERE longitude >= %s and longitude <= %s AND latitude >= %s and latitude <= %s"
-ZIP_FIND_QUERY = "SELECT * FROM ZipCodes WHERE city LIKE ? AND state LIKE ?"
+        if not conn and retry_count > 10:
+            raise exceptions.OperationalError("Can't connect to postgres db.")
+        conn = engine.raw_connection()
+        cur = conn.cursor()
+        cur.execute(sql)
+        results = cur.fetchall()
+        cur.close()
+        return results
+
 
 class ZipCode(object):
-    def __init__(self, data):
-        self.zip = data[0]
-        self.city = data[1]
-        self.state = data[2]
-        self.longitude = data[3]
-        self.latitude = data[4]
-        self.timezone = data[5]
-        self.dst = data[6]
+    def __init__(self, row):
+        self.zip = row['zip_code']
+        self.county = row['county']
+        self.county_fips = row['countyfips']
+        self.city = row['city']
+        self.state = row['state']
+        self.state_full_name = row['statefullname']
+        self.longitude = row['longitude']
+        self.latitude = row['latitude']
+        self.area_code = row['areacode']
+        self.population = row['population']
+        self.row = row
 
-def format_result(zips):
-    if len(zips) > 0:
-        return [ZipCode(zip) for zip in zips]
-    else:
-        return None
 
 class ZipNotFoundException(Exception):
     pass
-    
+
+
 class ZipCodeDatabase(object):
-    
-    def __init__(self, conn_manager=None):
-        if conn_manager is None:
-            conn_manager = ConnectionManager()
-        self.conn_manager = conn_manager
-        
-    def get_zipcodes_around_radius(self, zip, radius):
-        zips = self.get(zip)
-        if zips is None:
-            raise ZipNotFoundException("Could not find zip code you're searching by.")
+
+    def __init__(self, conn=None):
+        if conn is None:
+            conn = ConnectionManager()
+        self.conn = conn
+        self.engine = conn.engine
+        self.table = settings.table
+
+    def format_result(self, query):
+        zips = pd.read_sql(sql=query, con=self.engine)
+        if len(zips) > 0:
+            return [ZipCode(_zip) for _zip in zips.iterrows()]
         else:
-            zip = zips[0]
-        
-        radius = float(radius)
-        
-        long_range = (zip.longitude-(radius/69.0), zip.longitude+(radius/69.0))
-        lat_range = (zip.latitude-(radius/49.0), zip.latitude+(radius/49.0))
-        
-        return format_result(self.conn_manager.query(ZIP_RANGE_QUERY % (
-            long_range[0], long_range[1],
-            lat_range[0], lat_range[1]
-        )))
-                    
+            return None
+
+    def get(self, _zip):
+        zip_query = """SELECT * FROM {table} WHERE zip='{zipcode}'
+                    """.format(table=self.table, zipcode=_zip)
+        return self.format_result(zip_query)
+
     def find_zip(self, city=None, state=None):
+
         if city is None:
             city = "%"
         else:
             city = city.upper()
-            
+
         if state is None:
             state = "%"
-        else:
+        elif len(state) > 2:
+            states = us.states.mapping('name', 'abbr')
+            try:
+                state = states[state.title()]
+            except:
+                logger.info('Input state does not exist!')
+                if city == '%':
+                    raise Exception('')
             state = state.upper()
-            
-        return format_result(self.conn_manager.query(ZIP_FIND_QUERY, [city, state]))
-        
-    def get(self, zip):
-        return format_result(self.conn_manager.query(ZIP_QUERY, [zip]))
-            
-    def __getitem__(self, zip):
-        zip = self.get(str(zip))
-        if zip is None:
+        zip_find_query = """SELECT * FROM {table} WHERE
+                            city LIKE '{city}'
+                        AND state LIKE '{state}'
+                        """.format(table=self.table, city=city, state=state)
+        return self.format_result(zip_find_query)
+
+    def get_zipcodes_around_radius(self, _zip, radius):
+        zips = self.get(_zip)
+        zip_range_query = """SELECT * FROM %s WHERE
+                                longitude >= %d AND longitude <= %d
+                            AND latitude >= %d  AND latitude <= %d"""
+        if zips is None:
+            raise ZipNotFoundException("Could not find zip code")
+        else:
+            _zip = zips[0]
+
+        radius = float(radius)
+
+        long_range = (_zip.longitude - (radius / 69.0),
+                      _zip.longitude + (radius / 69.0))
+        lat_range = (_zip.latitude - (radius / 49.0),
+                     _zip.latitude + (radius / 49.0))
+
+        return self.format_result(zip_range_query % (
+            self.table,
+            long_range[0], long_range[1],
+            lat_range[0], lat_range[1]
+        ))
+
+    def __getitem__(self, _zip):
+        _zip = self.get(str(_zip))
+        if _zip is None:
             raise IndexError("Couldn't find zip")
         else:
-            return zip[0]
-            
-    
-        
-        
-        
-        
+            return _zip[0]
