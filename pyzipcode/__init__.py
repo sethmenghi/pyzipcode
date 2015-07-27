@@ -84,6 +84,9 @@ class ZipCodeDatabase(object):
             return None
 
     def get(self, _zip):
+        if len(_zip) > 5:
+            _zip = _zip[:5]
+        _zip = str(_zip).zfill(5)
         zip_query = """SELECT * FROM {table} WHERE zipcode='{zipcode}'
                     """.format(table=self.table, zipcode=_zip)
         return self.format_result(zip_query)
@@ -104,7 +107,7 @@ class ZipCodeDatabase(object):
             except:
                 logger.info('Input state does not exist!')
                 if city == '%':
-                    raise Exception('')
+                    raise Exception('No city input either, quittin!')
             state = state.upper()
         zip_find_query = """SELECT * FROM {table} WHERE
                             city LIKE '{city}'
@@ -136,8 +139,9 @@ class ZipCodeDatabase(object):
         ))
 
     def __getitem__(self, _zip):
-        _zip = self.get(str(_zip))
-        if _zip is None:
-            raise IndexError("Couldn't find zip")
+        returned_zip = self.get(str(_zip))
+        if returned_zip is None:
+            raise IndexError("""Couldn't find zip - {zipcode}
+                             """.format(zipcode=_zip))
         else:
-            return _zip[0]
+            return returned_zip[0]
