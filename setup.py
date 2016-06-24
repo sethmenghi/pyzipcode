@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 import sys
 import os
 
-version = '0.53'
+version = '0.54'
 
 install_requires = [
     'Cython>=0.22',
