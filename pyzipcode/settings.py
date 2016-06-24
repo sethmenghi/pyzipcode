@@ -1,4 +1,4 @@
-table = None
+table = "zipcodes"
 db = None
 host = None
 port = None
