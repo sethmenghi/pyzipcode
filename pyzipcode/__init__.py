@@ -18,9 +18,12 @@ class ConnectionManager(object):
     Assumes a database that will work with cursor objects
     """
 
-    def __init__(self):
+    def __init__(self, engine=None):
         # test out the connection...
-        self.engine = create_engine(settings.url)
+        if engine is None:
+            self.engine = create_engine(settings.url)
+        else:
+            self.engine = engine
         with self.engine.connect() as conn:
             pass
 
@@ -31,7 +34,10 @@ class ConnectionManager(object):
             # If there is trouble reading the file, retry for 10 attempts
             # then just give up...
             try:
-                engine = create_engine(settings.url)
+                if self.engine is None or retry_count >= 5:
+                    engine = self.engine
+                else:
+                    engine = create_engine(settings.url)
                 with engine.connect() as conn:
                     break
             except exceptions.OperationalError:
@@ -70,9 +76,7 @@ class ZipNotFoundException(Exception):
 class ZipCodeDatabase(object):
 
     def __init__(self, conn=None):
-        if conn is None:
-            conn = ConnectionManager()
-        self.conn = conn
+        conn = ConnectionManager(conn)
         self.engine = conn.engine
         self.table = settings.table
 
