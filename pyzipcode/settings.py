@@ -1,6 +1,3 @@
-from elect.core.common import query_config
-
-# Assuming we are using same server as elect
 table = None
 db = None
 host = None
